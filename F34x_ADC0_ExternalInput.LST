@@ -1,0 +1,381 @@
+C51 COMPILER V9.01   F34X_ADC0_EXTERNALINPUT                                               11/20/2015 21:06:37 PAGE 1   
+
+
+C51 COMPILER V9.01, COMPILATION OF MODULE F34X_ADC0_EXTERNALINPUT
+OBJECT MODULE PLACED IN F34x_ADC0_ExternalInput.OBJ
+COMPILER INVOKED BY: C:\Keil\C51\BIN\C51.EXE F34x_ADC0_ExternalInput.c LARGE ROM(COMPACT) BROWSE DEBUG OBJECTEXTEND
+
+line level    source
+
+   1          
+   2          
+   3          //-----------------------------------------------------------------------------
+   4          // Includes
+   5          //-----------------------------------------------------------------------------
+   6          
+   7          #include "c8051F340.h"                 // SFR declarations
+   8          #include <stdio.h>
+   9          
+  10          //-----------------------------------------------------------------------------
+  11          // 16-bit SFR Definitions for 'F34x
+  12          //-----------------------------------------------------------------------------
+  13          
+  14          sfr16 TMR2RL   = 0xca;                 // Timer2 reload value 
+  15          sfr16 TMR2     = 0xcc;                 // Timer2 counter
+  16          sfr16 ADC0     = 0xbd;                 // ADC0 result
+  17          
+  18          //-----------------------------------------------------------------------------
+  19          // Global CONSTANTS
+  20          //-----------------------------------------------------------------------------
+  21          
+  22          #define SYSCLK       12000000          // SYSCLK frequency in Hz
+  23          #define BAUDRATE     115200            // Baud rate of UART in bps
+  24          
+  25          sbit LED = P2^2;                       // LED='1' means ON
+  26          code int pis=1;
+  27          code char tab4[]={0x70,0x68,0x58,0x38};
+  28          code float rtab[]={0,14.8406,29.2571,
+  29          43.2676,55.5438,68.8285,81.7537,94.3338,110.194,
+  30          122.031,133.565,144.808,154.687,165.406,175.864,
+  31          186.07,195.048,204.8,214.326,223.632,231.827,240.738,
+  32          249.451,257.971,268.772,276.876,284.807,292.571,299.421,
+  33          306.884,314.194,321.356,334.574,341.333,347.961,354.462,
+  34          360.206,366.474,372.625,378.662,386.344,392.131,397.813,
+  35          403.394,408.332,413.728,419.03,424.241,428.855,433.898,
+  36          438.857,443.733,448.053,452.778,457.426,461.998,467.834,
+  37          472.241,476.579,480.849,484.635,488.781,492.863,496.884};
+  38             volatile unsigned char position[2][8]={0};
+  39          //-----------------------------------------------------------------------------
+  40          // Function PROTOTYPES
+  41          //-----------------------------------------------------------------------------
+  42          
+  43          void SYSCLK_Init (void);
+  44          void PORT_Init (void);
+  45          void Timer2_Init(void);
+  46          void ADC0_Init(void);
+  47          void UART0_Init (void);
+  48          unsigned int  decide();               //data change?
+  49          unsigned char deal(int kk);                   //a function deal with nonlinear data
+  50          void execute(unsigned int count);                                //打开第count路电阻
+  51          //-----------------------------------------------------------------------------
+  52          // MAIN Routine
+  53          //-----------------------------------------------------------------------------
+  54          
+  55          void main (void) 
+C51 COMPILER V9.01   F34X_ADC0_EXTERNALINPUT                                               11/20/2015 21:06:37 PAGE 2   
+
+  56          {
+  57   1         PCA0MD &= ~0x40;                    // WDTE = 0 (clear watchdog timer 
+  58   1                                             // enable)
+  59   1      
+  60   1         SYSCLK_Init ();                     // Initialize system clock to 
+  61   1                                             // 24.5MHz
+  62   1         PORT_Init ();                       // Initialize crossbar and GPIO
+  63   1         Timer2_Init();                      // Init Timer2 to generate 
+  64   1                                             // overflows to trigger ADC
+  65   1         UART0_Init();                       // Initialize UART0 for printf's
+  66   1         ADC0_Init();                        // Initialize ADC0
+  67   1      
+  68   1         EA = 1;                                                               // enable global interrupts
+  69   1         while (1) {                         // spin forever
+  70   2         }
+  71   1      }
+  72          
+  73          //-----------------------------------------------------------------------------
+  74          // Initialization Subroutines
+  75          //-----------------------------------------------------------------------------
+  76          
+  77          //-----------------------------------------------------------------------------
+  78          // SYSCLK_Init
+  79          //-----------------------------------------------------------------------------
+  80          //
+  81          // Return Value:  None
+  82          // Parameters:    None
+  83          //
+  84          // This routine initializes the system clock to use the internal 12MHz 
+  85          // oscillator as its clock source.  Also enables missing clock detector reset.
+  86          //
+  87          //-----------------------------------------------------------------------------
+  88          void SYSCLK_Init (void)
+  89          {
+  90   1         OSCICN = 0x83;                      // configure internal oscillator for
+  91   1                                             // 12MHz / 1
+  92   1         RSTSRC = 0x04;                      // enable missing clock detector
+  93   1      }
+  94          
+  95          //-----------------------------------------------------------------------------
+  96          // PORT_Init
+  97          //-----------------------------------------------------------------------------
+  98          //
+  99          // Return Value:  None
+ 100          // Parameters:    None
+ 101          //
+ 102          // Configure the Crossbar and GPIO ports.
+ 103          // P0.4 - UART TX (push-pull)
+ 104          // P0.5 - UART RX 
+ 105          // P1.1 - ADC0 analog input
+ 106          // P2.2 - LED (push-pull)
+ 107          // 
+ 108          //-----------------------------------------------------------------------------
+ 109          void PORT_Init (void)
+ 110          {
+ 111   1         XBR0     = 0x01;                    // Enable UART0
+ 112   1         XBR1     = 0xC0;                    // Enable crossbar and weak pull-ups
+ 113   1         P0MDOUT |= 0x10;                    // Set TX pin to push-pull
+ 114   1         P2MDOUT |= 0x04;                    // enable LED as a push-pull output
+ 115   1         P1MDIN &= ~0x02;                    // set P1.1 as an analog input
+ 116   1         P3MDOUT |= 0x7F;     
+ 117   1      }
+C51 COMPILER V9.01   F34X_ADC0_EXTERNALINPUT                                               11/20/2015 21:06:37 PAGE 3   
+
+ 118          
+ 119          //-----------------------------------------------------------------------------
+ 120          // Timer2_Init
+ 121          //-----------------------------------------------------------------------------
+ 122          //
+ 123          // Return Value:  None
+ 124          // Parameters:    None
+ 125          //
+ 126          // Configure Timer2 to 16-bit auto-reload and generate an interrupt at 100uS 
+ 127          // intervals.  Timer 2 overflow automatically triggers ADC0 conversion.
+ 128          // 
+ 129          //-----------------------------------------------------------------------------
+ 130          
+ 131          void Timer2_Init (void)
+ 132          {
+ 133   1         TMR2CN  = 0x00;                     // Stop Timer2; Clear TF2;
+ 134   1                                             // use SYSCLK as timebase, 16-bit 
+ 135   1                                             // auto-reload
+ 136   1         CKCON  |= 0x10;                     // select SYSCLK for timer 2 source
+ 137   1         TMR2RL  = 65535 - (SYSCLK / 40000); // init reload value for 20uS    !!!!!!!!!!!!!!!!!!!!!!!!!!!
+ 138   1         TMR2    = 0xffff;                   // set to reload immediately
+ 139   1         TR2     = 1;                        // start Timer2
+ 140   1      }
+ 141          
+ 142          //-----------------------------------------------------------------------------
+ 143          // ADC0_Init
+ 144          //-----------------------------------------------------------------------------
+ 145          //
+ 146          // Return Value:  None
+ 147          // Parameters:    None
+ 148          //
+ 149          // Configures ADC0 to make single-ended analog measurements on pin P1.1
+ 150          //  
+ 151          //-----------------------------------------------------------------------------
+ 152          
+ 153          void ADC0_Init (void)
+ 154          {
+ 155   1         ADC0CN = 0x02;                      // ADC0 disabled, normal tracking, 
+ 156   1                                             // conversion triggered on TMR2 overflow
+ 157   1      
+ 158   1         REF0CN = 0x0a;                      // Enable on-chip VREF and buffer
+ 159   1      
+ 160   1         AMX0P = 0x13;                       // ADC0 positive input = P1.1
+ 161   1         AMX0N = 0x1F;                       // ADC0 negative input = GND
+ 162   1                                             // i.e., single ended mode
+ 163   1      
+ 164   1         ADC0CF = ((SYSCLK/3000000)-1)<<3;   // set SAR clock to 3MHz
+ 165   1      
+ 166   1         ADC0CF |= 0x00;                     // right-justify results 
+ 167   1      
+ 168   1         EIE1 |= 0x08;                       // enable ADC0 conversion complete int.
+ 169   1      
+ 170   1         AD0EN = 1;                          // enable ADC0
+ 171   1      }
+ 172          
+ 173          //-----------------------------------------------------------------------------
+ 174          // UART0_Init
+ 175          //-----------------------------------------------------------------------------
+ 176          //
+ 177          // Return Value:  None
+ 178          // Parameters:    None
+ 179          //
+C51 COMPILER V9.01   F34X_ADC0_EXTERNALINPUT                                               11/20/2015 21:06:37 PAGE 4   
+
+ 180          // Configure the UART0 using Timer1, for <BAUDRATE> and 8-N-1.
+ 181          //
+ 182          //-----------------------------------------------------------------------------
+ 183          
+ 184          void UART0_Init (void)
+ 185          {
+ 186   1         SCON0 = 0x10;                       // SCON0: 8-bit variable bit rate
+ 187   1                                             //        level of STOP bit is ignored
+ 188   1                                             //        RX enabled
+ 189   1                                             //        ninth bits are zeros
+ 190   1                                             //        clear RI0 and TI0 bits
+ 191   1         if (SYSCLK/BAUDRATE/2/256 < 1) {
+ 192   2            TH1 = -(SYSCLK/BAUDRATE/2);
+ 193   2            CKCON |=  0x08;                  // T1M = 1; SCA1:0 = xx
+ 194   2         } else if (SYSCLK/BAUDRATE/2/256 < 4) {
+ 195   2            TH1 = -(SYSCLK/BAUDRATE/2/4);
+ 196   2            CKCON &= ~0x0B;                  // T1M = 0; SCA1:0 = 01
+ 197   2            CKCON |=  0x01;
+ 198   2         } else if (SYSCLK/BAUDRATE/2/256 < 12) {
+ 199   2            TH1 = -(SYSCLK/BAUDRATE/2/12);
+ 200   2            CKCON &= ~0x0B;                  // T1M = 0; SCA1:0 = 00
+ 201   2         } else if (SYSCLK/BAUDRATE/2/256 < 48) {
+ 202   2            TH1 = -(SYSCLK/BAUDRATE/2/48);
+ 203   2            CKCON &= ~0x0B;                  // T1M = 0; SCA1:0 = 10
+ 204   2            CKCON |=  0x02;
+ 205   2         } else {
+ 206   2            while (1);                       // Error.  Unsupported baud rate
+ 207   2         }
+ 208   1      
+ 209   1         TL1 = TH1;                          // init Timer1
+ 210   1         TMOD &= ~0xf0;                      // TMOD: timer 1 in 8-bit autoreload
+ 211   1         TMOD |=  0x20;
+ 212   1         TR1 = 1;                            // START Timer1
+ 213   1         TI0 = 1;                            // Indicate TX0 ready
+ 214   1      }
+ 215          
+ 216          //-----------------------------------------------------------------------------
+ 217          // Interrupt Service Routines
+ 218          //-----------------------------------------------------------------------------
+ 219          
+ 220          //-----------------------------------------------------------------------------
+ 221          // ADC0_ISR
+ 222          //-----------------------------------------------------------------------------
+ 223          // 
+ 224          // This ISR averages 2048 samples then prints the result to the terminal.  The 
+ 225          // ISR is called after each ADC conversion which is triggered by Timer2.
+ 226          //
+ 227          //-----------------------------------------------------------------------------
+ 228          
+ 229          void ADC0_ISR (void) interrupt 10
+ 230          {
+ 231   1      
+ 232   1         static unsigned long accumulator = 0;     // Accumulator for averaging
+ 233   1         static unsigned int measurements = 100;  // Measurement counter
+ 234   1         static unsigned int mm=0;
+ 235   1         static unsigned char change=0;
+ 236   1         static unsigned char over=0;
+ 237   1         unsigned char ii;
+ 238   1         int result=0;
+ 239   1       //  unsigned long mV;                         // Measured voltage in mV
+ 240   1      
+ 241   1         AD0INT = 0;                               // Clear ADC0 conv. complete flag
+C51 COMPILER V9.01   F34X_ADC0_EXTERNALINPUT                                               11/20/2015 21:06:37 PAGE 5   
+
+ 242   1            TR2     = 0;
+ 243   1         accumulator += ADC0;
+ 244   1         measurements--;
+ 245   1      
+ 246   1         if(measurements==0)
+ 247   1         {  
+ 248   2            measurements = 100;
+ 249   2            result = accumulator / 100;
+ 250   2            accumulator=0;
+ 251   2         //   mV =  result * 3300 / 1023;   
+ 252   2       //     printf("P1.1 voltage: %ld mV\n",mV);
+ 253   2      //        putchar(deal(result));
+ 254   2                                        position[change][mm]= deal(result);
+ 255   2                  if ((mm==(8*pis-1)))                                     //测得一组32个数据后
+ 256   2                       {
+ 257   3                               mm=0;    
+ 258   3                               over=1;                                        //重新测一组
+ 259   3                               if (decide()==1)                                      //如果有就发送数据
+ 260   3                               {
+ 261   4                                       putchar(0xaa);
+ 262   4                                       for(ii=0;ii<8*pis;ii++)
+ 263   4                                       {
+ 264   5                                               putchar(position[change][ii]);
+ 265   5                                       }
+ 266   4                                       putchar(0x55);                      //多发一个数据确认一组结束
+ 267   4                                       if (change==1)
+ 268   4                                       {
+ 269   5                                               change=0;
+ 270   5                                       }
+ 271   4                                       else
+ 272   4                                       {
+ 273   5                                               change=1;
+ 274   5                                       }
+ 275   4                               }
+ 276   3                       }
+ 277   2                       if (over==0)
+ 278   2                               mm ++;
+ 279   2                       if (over==1)            
+ 280   2                            over=0;
+ 281   2                               execute(mm);
+ 282   2         }
+ 283   1         LED=~LED;                           // Toggle LED
+ 284   1              TR2  = 1;
+ 285   1      }
+ 286          
+ 287           unsigned int decide()
+ 288          {
+ 289   1              unsigned int ii=0;
+ 290   1              unsigned int mtn=0; 
+ 291   1              for(ii=0;ii<(8*pis);ii++)
+ 292   1              {
+ 293   2                      if (position[0][ii]!=position[1][ii])
+ 294   2                      {
+ 295   3                              mtn= 1;
+ 296   3                      }
+ 297   2              }
+ 298   1          return mtn;
+ 299   1      }
+ 300          
+ 301           unsigned char deal(int kk)                   //a function deal with nonlinear data
+ 302          {
+ 303   1          unsigned char key_deal=0;
+C51 COMPILER V9.01   F34X_ADC0_EXTERNALINPUT                                               11/20/2015 21:06:37 PAGE 6   
+
+ 304   1              unsigned char ii=0; 
+ 305   1              unsigned char iq=0;                              
+ 306   1              for (ii=0;ii<63;ii++)
+ 307   1              {
+ 308   2      
+ 309   2             if ((kk-rtab[ii])>=0 && (kk-rtab[ii+1])<0)
+ 310   2             {
+ 311   3                     iq=ii;
+ 312   3                 }
+ 313   2      
+ 314   2              }
+ 315   1           if((kk-rtab[63])>=0)
+ 316   1                     iq=63;
+ 317   1      
+ 318   1              if(iq==63)
+ 319   1                  key_deal=iq;
+ 320   1              else
+ 321   1              {
+ 322   2          if ((kk-rtab[iq])<=(rtab[iq+1]-kk))
+ 323   2             {
+ 324   3                     key_deal=iq;
+ 325   3                 }
+ 326   2                else
+ 327   2                {
+ 328   3                        key_deal=iq+1;
+ 329   3                }
+ 330   2          }    
+ 331   1        return key_deal;
+ 332   1       }
+ 333           void execute(unsigned int count)
+ 334          {
+ 335   1              unsigned int i;
+ 336   1              unsigned int j;
+ 337   1              i=count & 0x07;
+ 338   1              j=(count & 0x18) >> 3;
+ 339   1              
+ 340   1              P3&=0x78;
+ 341   1              P3|=i;
+ 342   1              
+ 343   1              P3&=0x07;
+ 344   1              P3|=tab4[j];            
+ 345   1      }
+ 346          //-----------------------------------------------------------------------------
+ 347          // End Of File
+ 348          //-----------------------------------------------------------------------------
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =    963    ----
+   CONSTANT SIZE    =    262    ----
+   XDATA SIZE       =     26       8
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----    ----
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

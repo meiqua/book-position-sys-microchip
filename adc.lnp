@@ -1,0 +1,4 @@
+"STARTUP.obj",
+"F34x_ADC0_ExternalInput.obj" 
+TO "adc" 
+RAMSIZE(256) 
